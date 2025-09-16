@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>8 — 25,000 Hz Tone Generator</title>
+  <style>
+    :root{--bg:#0f1724;--card:#0b1220;--accent:#22c1c3;--muted:#9aa6b2;color-scheme:dark}
+    html,body{height:100%;margin:0;background:linear-gradient(180deg,#071026,#071423);font-family:Inter,system-ui,Segoe UI,Roboto,'Helvetica Neue',Arial}
+    .wrap{max-width:920px;margin:32px auto;padding:20px;border-radius:14px;background:linear-gradient(180deg,rgba(255,255,255,0.02),rgba(255,255,255,0.01));box-shadow:0 6px 30px rgba(2,6,23,0.6)}
+    h1{margin:0 0 6px;font-size:20px}
+    p.lead{margin:0 0 18px;color:var(--muted)}
+    .controls{display:grid;grid-template-columns:1fr 300px;gap:18px;align-items:start}
+    .panel{background:var(--card);padding:14px;border-radius:12px}
+    label{display:block;font-size:12px;color:var(--muted);margin-bottom:8px}
+    .slider{width:100%}
+    .row{display:flex;gap:10px;align-items:center}
+    button{background:var(--accent);border:none;color:#021017;padding:10px 14px;border-radius:10px;cursor:pointer;font-weight:600}
+    button.secondary{background:transparent;border:1px solid rgba(255,255,255,0.06);color:var(--muted)}
+    select,input[type=range]{-webkit-appearance:none}
+    input[type=range]::-webkit-slider-thumb{appearance:none;height:18px;width:18px;border-radius:50%;background:var(--accent);box-shadow:0 2px 6px rgba(0,0,0,0.6)}
+    .big-display{font-family:monospace;font-size:24px;color:#dfeff0}
+    canvas{width:100%;height:160px;border-radius:8px;background:linear-gradient(180deg,#02060a,#061018);display:block}
+    footer{margin-top:18px;color:var(--muted);font-size:13px}
+    .right-col{display:flex;flex-direction:column;gap:12px}
+    .muted{color:var(--muted)}
+    .small{font-size:12px}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>8 — 25,000 Hz Tone Generator</h1>
+    <p class="lead">Interactive tone generator with slider. Uses Web Audio API. Move the slider to change frequency (8 Hz — 25,000 Hz). Logarithmic mapping by default for perceptual control.</p>
+
+    <div class="controls">
+      <div class="panel">
+        <label for="freqRange">Frequency</label>
+        <input id="freqRange" class="slider" type="range" min="0" max="100" value="50" step="0.1" aria-label="frequency slider">
+        <div style="display:flex;justify-content:space-between;margin-top:8px;align-items:center">
+          <div>
+            <div class="muted small">Frequency</div>
+            <div id="freqDisplay" class="big-display">-- Hz</div>
+          </div>
+          <div style="text-align:right">
+            <div class="muted small">Mode</div>
+            <select id="modeSelect" class="small">
+              <option value="log">Logarithmic (recommended)</option>
+              <option value="linear">Linear</option>
+            </select>
+          </div>
+        </div>
+
+        <hr style="margin:12px 0;border:none;border-top:1px solid rgba(255,255,255,0.03)">
+
+        <label for="waveSelect">Waveform</label>
+        <select id="waveSelect">
+          <option value="sine">Sine</option>
+          <option value="square">Square</option>
+          <option value="sawtooth">Sawtooth</option>
+          <option value="triangle">Triangle</option>
+        </select>
+
+        <label for="gainRange" style="margin-top:12px">Volume</label>
+        <input id="gainRange" class="slider" type="range" min="0" max="1" step="0.01" value="0.2">
+
+        <div style="display:flex;gap:8px;margin-top:12px">
+          <button id="startBtn">Start</button>
+          <button id="stopBtn" class="secondary" disabled>Stop</button>
+          <button id="muteBtn" class="secondary">Mute</button>
+        </div>
+
+        <div style="margin-top:12px;color:var(--muted);font-size:13px">
+          <strong>Range:</strong> 8 Hz — 25,000 Hz &nbsp;•&nbsp; <strong>Warning:</strong> very high frequencies may be inaudible or filtered by hardware.
+        </div>
+      </div>
+
+      <div class="right-col">
+        <div class="panel">
+          <label>Visualizer</label>
+          <canvas id="vis" width="800" height="160"></canvas>
+        </div>
+
+        <div class="panel">
+          <label>Extras</label>
+          <div class="row" style="margin-top:8px">
+            <div style="flex:1">
+              <label class="small muted">Sample Rate</label>
+              <div id="sampleRate" class="muted small">—</div>
+            </div>
+            <div style="width:1px;background:rgba(255,255,255,0.03)"></div>
+            <div style="flex:1">
+              <label class="small muted">Current Wave</label>
+              <div id="currentWave" class="muted small">—</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <footer>Built with Web Audio API — drag the slider or click Start. For best results use headphones. Note: some browsers require user gesture to start audio.</footer>
+  </div>
+
+<script>
+(() => {
+  const MIN_FREQ = 8;
+  const MAX_FREQ = 25000;
+
+  let audioCtx = null;
+  let oscillator = null;
+  let gainNode = null;
+  let analyser = null;
+  let isMuted = false;
+
+  const freqRange = document.getElementById('freqRange');
+  const freqDisplay = document.getElementById('freqDisplay');
+  const modeSelect = document.getElementById('modeSelect');
+  const waveSelect = document.getElementById('waveSelect');
+  const gainRange = document.getElementById('gainRange');
+  const startBtn = document.getElementById('startBtn');
+  const stopBtn = document.getElementById('stopBtn');
+  const muteBtn = document.getElementById('muteBtn');
+  const vis = document.getElementById('vis');
+  const ctx = vis.getContext('2d');
+  const sampleRateEl = document.getElementById('sampleRate');
+  const currentWaveEl = document.getElementById('currentWave');
+
+  function sliderToFreq(posPercent, mode) {
+    // posPercent: 0..100
+    if (mode === 'linear') {
+      return MIN_FREQ + (MAX_FREQ - MIN_FREQ) * (posPercent / 100);
+    }
+    // logarithmic mapping: geometric interpolation
+    const min = Math.log(MIN_FREQ);
+    const max = Math.log(MAX_FREQ);
+    const val = Math.exp(min + (max - min) * (posPercent / 100));
+    return val;
+  }
+
+  function formatHz(v){
+    if (v >= 1000) return (v/1000).toFixed(v>=10000?0:1) + ' kHz';
+    if (v >= 100) return v.toFixed(0) + ' Hz';
+    return v.toFixed(2) + ' Hz';
+  }
+
+  function ensureAudio() {
+    if (!audioCtx) {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      sampleRateEl.textContent = audioCtx.sampleRate + ' Hz';
+
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 2048;
+
+      gainNode = audioCtx.createGain();
+      gainNode.gain.value = parseFloat(gainRange.value);
+      gainNode.connect(analyser);
+      analyser.connect(audioCtx.destination);
+
+      drawVisualizer();
+    }
+  }
+
+  function startTone() {
+    ensureAudio();
+    if (oscillator) stopTone();
+
+    oscillator = audioCtx.createOscillator();
+    oscillator.type = waveSelect.value;
+    oscillator.frequency.setValueAtTime(getCurrentFrequency(), audioCtx.currentTime);
+    oscillator.connect(gainNode);
+    oscillator.start();
+
+    startBtn.disabled = true;
+    stopBtn.disabled = false;
+    currentWaveEl.textContent = oscillator.type;
+  }
+
+  function stopTone(){
+    if (!oscillator) return;
+    try{ oscillator.stop(); } catch(e){}
+    oscillator.disconnect();
+    oscillator = null;
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+  }
+
+  function getCurrentFrequency(){
+    const pos = parseFloat(freqRange.value);
+    const freq = sliderToFreq(pos, modeSelect.value);
+    return Math.max(MIN_FREQ, Math.min(MAX_FREQ, freq));
+  }
+
+  function updateFreqDisplayAndApply(){
+    const freq = getCurrentFrequency();
+    freqDisplay.textContent = formatHz(freq);
+    if (oscillator) {
+      // smooth frequency change for glissando-free transition
+      const t = audioCtx.currentTime;
+      oscillator.frequency.cancelScheduledValues(t);
+      oscillator.frequency.setTargetAtTime(freq, t, 0.02);
+    }
+  }
+
+  freqRange.addEventListener('input', ()=>{
+    updateFreqDisplayAndApply();
+  });
+
+  modeSelect.addEventListener('change', ()=>{
+    // when switching mapping, preserve perceived freq and position sensibly
+    updateFreqDisplayAndApply();
+  });
+
+  waveSelect.addEventListener('change',()=>{
+    currentWaveEl.textContent = waveSelect.value;
+    if (oscillator) oscillator.type = waveSelect.value;
+  });
+
+  gainRange.addEventListener('input',()=>{
+    if (gainNode) gainNode.gain.setValueAtTime(parseFloat(gainRange.value), audioCtx.currentTime);
+  });
+
+  startBtn.addEventListener('click', ()=>{
+    // must be user gesture in many browsers
+    try{
+      startTone();
+    }catch(e){
+      console.error(e);
+      alert('Unable to start audio: ' + e.message);
+    }
+  });
+
+  stopBtn.addEventListener('click', ()=>{
+    stopTone();
+  });
+
+  muteBtn.addEventListener('click', ()=>{
+    if (!audioCtx) return;
+    isMuted = !isMuted;
+    gainNode.gain.setValueAtTime(isMuted?0:parseFloat(gainRange.value), audioCtx.currentTime);
+    muteBtn.textContent = isMuted ? 'Unmute' : 'Mute';
+  });
+
+  // visualizer
+  function drawVisualizer(){
+    if (!analyser) return;
+    const bufferLength = analyser.fftSize;
+    const data = new Uint8Array(bufferLength);
+
+    function draw(){
+      requestAnimationFrame(draw);
+      analyser.getByteTimeDomainData(data);
+      ctx.clearRect(0,0,vis.width,vis.height);
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      const sliceWidth = vis.width * 1.0 / bufferLength;
+      let x = 0;
+      for(let i=0;i<bufferLength;i++){
+        const v = data[i] / 128.0; // 0..2
+        const y = v * vis.height/2;
+        if(i===0) ctx.moveTo(x,y);
+        else ctx.lineTo(x,y);
+        x += sliceWidth;
+      }
+      ctx.strokeStyle = 'rgba(34,193,195,0.95)';
+      ctx.stroke();
+    }
+    draw();
+  }
+
+  // init display values
+  (function init(){
+    // default slider value already set to 50: show corresponding frequency
+    updateFreqDisplayAndApply();
+    currentWaveEl.textContent = waveSelect.value;
+  })();
+
+  // keyboard shortcuts
+  window.addEventListener('keydown', (e)=>{
+    if (e.key === ' ') { e.preventDefault(); if (oscillator) stopTone(); else startTone(); }
+    if (e.key === 'm') muteBtn.click();
+    if (e.key === 'ArrowUp') { freqRange.value = Math.min(100, parseFloat(freqRange.value)+1); updateFreqDisplayAndApply(); }
+    if (e.key === 'ArrowDown') { freqRange.value = Math.max(0, parseFloat(freqRange.value)-1); updateFreqDisplayAndApply(); }
+  });
+
+})();
+</script>
+</body>
+</html>
